@@ -10,19 +10,21 @@
     .section { background: #fff; padding: 20px; margin: 15px auto; border-radius: 10px; max-width: 800px; box-shadow: 0 0 8px rgba(0,0,0,0.1); }
     select, button { padding: 8px 12px; border-radius: 6px; border: 1px solid #ccc; margin: 6px 0; }
     button { background: #007a6a; color: #fff; border: none; cursor: pointer; }
-    canvas { display: block; margin: 10px auto; background: #000; border-radius: 10px; }
+    button:hover { background: #009f8a; }
+    #chart { height:300px; margin-top:10px; }
     #prediction { font-size: 18px; font-weight: bold; margin-top: 10px; }
-    #imagePreview { width: 300px; height: 150px; border: 2px dashed #aaa; display: block; margin: 10px auto; object-fit: contain; }
     .result { text-align: center; margin-top: 10px; }
     .pred-badge { display: inline-block; padding: 6px 12px; border-radius: 6px; }
     .up { background: #2ecc71; color: #fff; }
     .down { background: #e74c3c; color: #fff; }
+    canvas { display: block; margin: 10px auto; background: #000; border-radius: 10px; }
   </style>
 
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
   <script src="https://unpkg.com/lightweight-charts@4.0.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
+
   <h1>Pocket Option Prediction Bot</h1>
 
   <div class="section">
@@ -37,7 +39,7 @@
     </select>
     <button id="fetchData">Get Prediction</button>
 
-    <div id="chart" style="height:300px;margin-top:10px;"></div>
+    <div id="chart"></div>
 
     <div class="result">
       <div id="prediction">Waiting for data...</div>
@@ -48,7 +50,7 @@
   <div class="section">
     <h2>Upload Chart Screenshot</h2>
     <input type="file" id="screenshotInput" accept="image/*">
-    <canvas id="imagePreview"></canvas>
+    <canvas id="imagePreview" width="300" height="150"></canvas>
     <button id="analyzeBtn">Analyze Screenshot</button>
     <div class="result">
       <div id="imgPrediction"></div>
@@ -75,52 +77,52 @@
       const now = Date.now();
       if (cache[symbol] && now - cache[symbol].time < CACHE_TTL) return cache[symbol].data;
 
-      let url;
-      if (symbol === "USOIL") {
-        url = `https://www.alphavantage.co/query?function=COMMODITY_EXCHANGE_RATE&from_symbol=WTI&to_symbol=USD&apikey=${ALPHA_KEY}`;
-      } else if (symbol === "XAUUSD") {
-        url = `https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=XAU&to_symbol=USD&interval=1min&apikey=${ALPHA_KEY}`;
-      } else if (symbol === "BTCUSD") {
-        url = `https://www.alphavantage.co/query?function=CRYPTO_INTRADAY&symbol=BTC&market=USD&interval=1min&apikey=${ALPHA_KEY}`;
-      } else {
-        url = `https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=${symbol.slice(0,3)}&to_symbol=${symbol.slice(3)}&interval=1min&apikey=${ALPHA_KEY}`;
+      const finSym = {
+        "EURUSD": "OANDA:EUR_USD",
+        "GBPUSD": "OANDA:GBP_USD",
+        "USDJPY": "OANDA:USD_JPY",
+        "XAUUSD": "OANDA:XAU_USD",
+        "USOIL": "OANDA:WTICO_USD",
+        "BTCUSD": "BINANCE:BTCUSDT"
+      }[symbol];
+
+      // Finnhub (primary)
+      const nowSec = Math.floor(Date.now() / 1000);
+      const fromSec = nowSec - 3600; // 1 hour window
+      const url = `https://finnhub.io/api/v1/forex/candle?symbol=${finSym}&resolution=1&from=${fromSec}&to=${nowSec}&token=${FINNHUB_KEY}`;
+      const res = await fetch(url);
+      const json = await res.json();
+
+      if (json && json.s === "ok" && json.t) {
+        const data = json.t.map((t, i) => ({
+          time: t,
+          open: json.o[i],
+          high: json.h[i],
+          low: json.l[i],
+          close: json.c[i]
+        }));
+        cache[symbol] = { data, time: now };
+        return data;
       }
 
-      let res = await fetch(url);
-      let json = await res.json();
-      let key = Object.keys(json).find(k => k.includes('Time Series'));
-
-      let data;
-      if (json[key]) {
-        data = Object.entries(json[key]).map(([time, ohlc]) => ({
+      // Alpha Vantage fallback
+      const alt = `https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=${symbol.slice(0,3)}&to_symbol=${symbol.slice(3)}&interval=1min&apikey=${ALPHA_KEY}`;
+      const altRes = await fetch(alt);
+      const altJson = await altRes.json();
+      const key = Object.keys(altJson).find(k => k.includes("Time Series"));
+      if (altJson[key]) {
+        const data = Object.entries(altJson[key]).map(([time, ohlc]) => ({
           time: new Date(time).getTime() / 1000,
           open: parseFloat(ohlc["1. open"]),
           high: parseFloat(ohlc["2. high"]),
           low: parseFloat(ohlc["3. low"]),
           close: parseFloat(ohlc["4. close"])
         })).reverse();
-      } else {
-        console.warn("AlphaVantage failed. Using Finnhub fallback...");
-        const finSym = symbol === "USOIL" ? "OANDA:WTICOUSD" :
-                       symbol === "XAUUSD" ? "OANDA:XAUUSD" :
-                       symbol === "BTCUSD" ? "BINANCE:BTCUSDT" : `OANDA:${symbol}`;
-        const finUrl = `https://finnhub.io/api/v1/forex/candle?symbol=${finSym}&resolution=1&count=100&token=${FINNHUB_KEY}`;
-        const finData = await fetch(finUrl).then(r => r.json());
-        if (finData && finData.t) {
-          data = finData.t.map((t, i) => ({
-            time: t,
-            open: finData.o[i],
-            high: finData.h[i],
-            low: finData.l[i],
-            close: finData.c[i]
-          }));
-        }
+        cache[symbol] = { data, time: now };
+        return data;
       }
 
-      if (!data || data.length === 0) throw new Error("⚠️ No data returned. Check API key or symbol.");
-
-      cache[symbol] = { data, time: now };
-      return data;
+      throw new Error("⚠️ No data returned. Check API key or symbol.");
     }
 
     function calcRSI(data, period = 14) {
@@ -129,7 +131,7 @@
         const diff = data[i].close - data[i - 1].close;
         if (diff >= 0) gains += diff; else losses += Math.abs(diff);
       }
-      const rs = (gains / period) / (losses / period);
+      const rs = (gains / period) / ((losses / period) || 0.0001);
       return 100 - (100 / (1 + rs));
     }
 
@@ -146,62 +148,57 @@
       const ema26 = EMA(data.slice(-long), long);
       const macdLine = ema12.map((v, i) => ({ time: v.time, value: v.value - ema26[i].value }));
       const signalLine = EMA(macdLine, signal);
-      return macdLine[macdLine.length - 1].value - signalLine[signalLine.length - 1].value;
+      return macdLine.at(-1).value - signalLine.at(-1).value;
     }
 
     async function predict(symbol) {
       predictionEl.textContent = "Fetching data...";
+      predictionEl.className = "pred-badge";
+      explainEl.textContent = "";
       try {
         const data = await getData(symbol);
         candleSeries.setData(data);
-
         const rsi = calcRSI(data);
         const macd = calcMACD(data);
-        const last = data[data.length - 1];
-        const prev = data[data.length - 2];
+        const last = data.at(-1);
+        const prev = data.at(-2);
         const trend = last.close > prev.close ? 1 : -1;
-
         let score = trend * 0.4 + (macd > 0 ? 0.3 : -0.3) + (rsi > 50 ? 0.3 : -0.3);
         const direction = score > 0 ? "UP" : "DOWN";
         const confidence = Math.round(Math.abs(score) * 100);
-        const explain = `RSI ${rsi.toFixed(1)}, MACD ${macd.toFixed(3)} — Predicting ${direction}`;
-
-        predictionEl.textContent = direction + " (" + confidence + "%)";
+        predictionEl.textContent = `Next Candle: ${direction} (${confidence}%)`;
         predictionEl.className = "pred-badge " + (direction === "UP" ? "up" : "down");
-        explainEl.textContent = explain;
+        explainEl.textContent = `RSI ${rsi.toFixed(1)}, MACD ${macd.toFixed(3)} — predicting next candle ${direction}`;
       } catch (err) {
         predictionEl.textContent = err.message;
-        predictionEl.className = "";
-        explainEl.textContent = "";
+        predictionEl.className = "pred-badge down";
       }
     }
 
-    document.getElementById('fetchData').addEventListener('click', () => {
-      const symbol = document.getElementById('symbol').value;
+    document.getElementById("fetchData").addEventListener("click", () => {
+      const symbol = document.getElementById("symbol").value;
       predict(symbol);
     });
 
     initChart();
 
     // ==== Screenshot Analyzer ====
-    const screenshotInput = document.getElementById('screenshotInput');
-    const imagePreview = document.getElementById('imagePreview');
-    const analyzeBtn = document.getElementById('analyzeBtn');
-    const imgPrediction = document.getElementById('imgPrediction');
-    const imgExplain = document.getElementById('imgExplain');
+    const screenshotInput = document.getElementById("screenshotInput");
+    const imagePreview = document.getElementById("imagePreview");
+    const analyzeBtn = document.getElementById("analyzeBtn");
+    const imgPrediction = document.getElementById("imgPrediction");
+    const imgExplain = document.getElementById("imgExplain");
     let lastUploadedImage = null;
 
-    screenshotInput.addEventListener('change', (event) => {
+    screenshotInput.addEventListener("change", (event) => {
       const file = event.target.files[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = e => {
+      reader.onload = (e) => {
         const img = new Image();
         img.onload = () => {
-          const ctx = imagePreview.getContext('2d');
+          const ctx = imagePreview.getContext("2d");
           ctx.clearRect(0, 0, imagePreview.width, imagePreview.height);
-          imagePreview.width = 300;
-          imagePreview.height = 150;
           ctx.drawImage(img, 0, 0, imagePreview.width, imagePreview.height);
           lastUploadedImage = img;
         };
@@ -210,8 +207,11 @@
       reader.readAsDataURL(file);
     });
 
-    analyzeBtn.addEventListener('click', async () => {
-      if (!lastUploadedImage) { alert("Please upload a screenshot first."); return; }
+    analyzeBtn.addEventListener("click", async () => {
+      if (!lastUploadedImage) {
+        alert("Please upload a screenshot first.");
+        return;
+      }
       imgPrediction.textContent = "Analyzing...";
       try {
         const tensor = tf.browser.fromPixels(lastUploadedImage)
@@ -220,7 +220,6 @@
           .expandDims(0)
           .expandDims(-1)
           .div(255);
-
         const mean = (await tensor.mean().array());
         const dir = mean > 0.5 ? "DOWN" : "UP";
         const confidence = Math.round(Math.abs(0.5 - mean) * 200);

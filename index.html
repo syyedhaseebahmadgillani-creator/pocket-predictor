@@ -22,7 +22,6 @@
     canvas { display: block; margin: 10px auto; background: #000; border-radius: 10px; }
   </style>
 
-  <!-- Load TensorFlow.js + Lightweight Charts -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
   <script src="https://unpkg.com/lightweight-charts@4.0.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
@@ -63,7 +62,6 @@
 
   <script>
   const API_KEY = "d3t7e59r01qtes8uqkmgd3t7e59r01qtes8uqkn0";
-  const BASE_URL = "https://finnhub.io/api/v1/quote?symbol=";
   const CACHE_TTL = 60 * 1000;
   const chartDiv = document.getElementById('chart');
   const predictionEl = document.getElementById('prediction');
@@ -81,20 +79,22 @@
     if (cache[symbol] && now - cache[symbol].time < CACHE_TTL) return cache[symbol].data;
 
     const map = {
-      "EURUSD": "OANDA:EUR_USD",
-      "GBPUSD": "OANDA:GBP_USD",
-      "USDJPY": "OANDA:USD_JPY",
-      "XAUUSD": "OANDA:XAU_USD",
-      "USOIL":  "OANDA:WTICO_USD",
-      "BTCUSD": "BINANCE:BTCUSDT"
+      "EURUSD": { symbol: "OANDA:EUR_USD", type: "forex" },
+      "GBPUSD": { symbol: "OANDA:GBP_USD", type: "forex" },
+      "USDJPY": { symbol: "OANDA:USD_JPY", type: "forex" },
+      "XAUUSD": { symbol: "OANDA:XAU_USD", type: "forex" },
+      "USOIL":  { symbol: "OANDA:WTICO_USD", type: "forex" },
+      "BTCUSD": { symbol: "BINANCE:BTCUSDT", type: "crypto" }
     };
-    const finSymbol = map[symbol] || "OANDA:EUR_USD";
 
-    const url = `https://finnhub.io/api/v1/forex/candle?symbol=${finSymbol}&resolution=1&count=200&token=${API_KEY}`;
+    const { symbol: finSymbol, type } = map[symbol] || map["EURUSD"];
+    const endpoint = type === "crypto" ? "crypto/candle" : "forex/candle";
+    const url = `https://finnhub.io/api/v1/${endpoint}?symbol=${finSymbol}&resolution=1&count=200&token=${API_KEY}`;
+
     const res = await fetch(url);
     const json = await res.json();
 
-    if (!json.c || !json.t) throw new Error("No data returned. Check API key or limits.");
+    if (!json.c || !json.t) throw new Error("No data returned. Check API key or symbol.");
 
     const data = json.t.map((t, i) => ({
       time: t,

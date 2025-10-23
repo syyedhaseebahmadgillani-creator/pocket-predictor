@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Pocket Option — Candle Predictor (Demo)</title>
+  <style>
+    :root{
+      --bg:#0f172a; --panel:#0b1220; --accent:#10b981; --muted:#94a3b8;
+      --card:#0b1220; --glass:rgba(255,255,255,0.02);
+    }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;margin:0;background:linear-gradient(180deg,#071024 0%, #071725 100%);color:#e6eef7;min-height:100vh;}
+    .wrap{max-width:980px;margin:18px auto;padding:16px;}
+    header{display:flex;gap:12px;align-items:center;justify-content:space-between;}
+    h1{font-size:18px;margin:0;color:var(--accent)}
+    .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+    .card{background:var(--card);border-radius:12px;padding:12px;box-shadow:0 6px 20px rgba(2,6,23,0.6);}
+    select,input,button{background:var(--glass);border:1px solid rgba(255,255,255,0.03);color:inherit;padding:8px;border-radius:8px}
+    button{cursor:pointer}
+    #chart{height:380px;margin-top:12px;border-radius:8px;overflow:hidden}
+    .prediction{margin-top:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    .pred-badge{padding:10px 16px;border-radius:10px;font-weight:700}
+    .pred-up{background:linear-gradient(90deg,rgba(16,185,129,0.12),rgba(16,185,129,0.06));color:#86f0c9}
+    .pred-down{background:linear-gradient(90deg,rgba(239,68,68,0.06),rgba(239,68,68,0.02));color:#ffb3b3}
+    .muted{color:var(--muted);font-size:13px}
+    .row{display:flex;gap:8px;align-items:center;}
+    footer{margin-top:14px;font-size:12px;color:var(--muted)}
+    @media(max-width:640px){.controls{flex-direction:column}}
+  </style>
+  <!-- Lightweight Charts CDN -->
+  <script src="https://unpkg.com/lightweight-charts@4.1.6/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Pocket Option — Candle Predictor (Demo)</h1>
+        <div class="muted">Prediction only — not automated trading. Rule-based predictor (EMA momentum)</div>
+      </div>
+      <div class="muted">Free demo • Host on GitHub Pages</div>
+    </header>
+
+    <div class="card" style="margin-top:12px">
+      <div class="controls">
+        <div class="row">
+          <label class="muted" for="symbol">Asset</label>
+          <select id="symbol"></select>
+        </div>
+
+        <div class="row">
+          <label class="muted" for="interval">Timeframe</label>
+          <select id="interval">
+            <option value="1min">1 min</option>
+            <option value="5min">5 min</option>
+            <option value="15min">15 min</option>
+            <option value="30min">30 min</option>
+            <option value="60min">60 min</option>
+          </select>
+        </div>
+
+        <div class="row">
+          <label class="muted" for="target">Predict</label>
+          <select id="target">
+            <option value="current">Current candle</option>
+            <option value="next">Next upcoming candle</option>
+          </select>
+        </div>
+
+        <div class="row">
+          <label class="muted" for="expiry">Expiry (seconds)</label>
+          <input id="expiry" type="number" value="60" min="5" step="5" style="width:90px"/>
+        </div>
+
+        <div class="row">
+          <button id="refresh">Refresh Data</button>
+          <button id="start">Start Auto</button>
+        </div>
+      </div>
+
+      <div id="chart"></div>
+
+      <div class="prediction">
+        <div id="direction" class="pred-badge">—</div>
+        <div class="muted" id="confidence">Confidence: —</div>
+        <div class="muted" id="countdown">Countdown: —</div>
+        <div class="muted" id="last-update">Last update: —</div>
+      </div>
+
+      <div style="margin-top:10px" class="muted">
+        Data source: set in code (Alpha Vantage). Replace `ALPHA_VANTAGE_KEY` variable with your free key.
+      </div>
+    </div>
+
+    <footer class="muted">
+      How prediction works: short EMA (8) vs long EMA (21) + last candle direction → simple probability score. This is demonstrational; use a demo account before real trades.
+    </footer>
+  </div>
+
+<script>
+/* ======= CONFIG (replace YOUR_KEY_HERE with your Alpha Vantage free API key) ====== */
+const ALPHA_VANTAGE_KEY = 'YOUR_KEY_HERE';
+/* ======= END CONFIG ====== */
+
+/* Default symbol list (editable). These are common Pocket Option-style assets.
+   If a symbol returns no data from Alpha Vantage, try provider-specific symbol names. */
+const SYMBOLS = [
+  'EURUSD','GBPUSD','USDJPY','USDCHF','AUDUSD','USDCAD','NZDUSD','GBPJPY',
+  'XAUUSD','XAGUSD','BRENT','WTI','BTCUSD','ETHUSD','LTCUSD',
+  'AAPL','TSLA','MSFT'
+];
+
+const symbolSelect = document.getElementById('symbol');
+SYMBOLS.forEach(s=>{
+  const opt = document.createElement('option');
+  opt.value = s; opt.textContent = s;
+  symbolSelect.appendChild(opt);
+});
+
+const intervalInput = document.getElementById('interval');
+const targetInput = document.getElementById('target');
+const expiryInput = document.getElementById('expiry');
+const refreshBtn = document.getElementById('refresh');
+const startBtn = document.getElementById('start');
+const directionEl = document.getElementById('direction');
+const confidenceEl = document.getElementById('confidence');
+const countdownEl = document.getElementById('countdown');
+const lastUpdateEl = document.getElementById('last-update');
+
+let chart, candleSeries;
+function createChart(){
+  const container = document.getElementById('chart');
+  container.innerHTML = '';
+  chart = LightweightCharts.createChart(container, {
+    layout: { background: { color: '#071025' }, textColor: '#dbeafe' },
+    rightPriceScale: { visible: true },
+    timeScale: { timeVisible: true, secondsVisible: false },
+    grid: { vertLines: { color: 'rgba(255,255,255,0.03)' }, horzLines: { color: 'rgba(255,255,255,0.02)' } }
+  });
+  candleSeries = chart.addCandlestickSeries();
+}
+createChart();
+
+/* =========== Helpers: EMA, parsing ============ */
+function ema(values, period){
+  if(values.length < period) return null;
+  const k = 2/(period+1);
+  let emaPrev = values.slice(0,period).reduce((a,b)=>a+b,0)/period;
+  for(let i=period;i<values.length;i++){
+    emaPrev = values[i]*k + emaPrev*(1-k);
+  }
+  return emaPrev;
+}
+
+function parseAlphaVantageIntraday(json, interval){
+  // Alpha Vantage returns keys like "Time Series (1min)"
+  const key = Object.keys(json).find(k=>k.toLowerCase().includes('time series'));
+  if(!key) return null;
+  const series = json[key];
+  const out = [];
+  for(const time in series){
+    const d = series[time];
+    out.push({
+      time: time,
+      open: parseFloat(d['1. open']),
+      high: parseFloat(d['2. high']),
+      low: parseFloat(d['3. low']),
+      close: parseFloat(d['4. close']),
+      volume: parseFloat(d['5. volume'] || 0)
+    });
+  }
+  // sort ascending by time
+  out.sort((a,b)=> new Date(a.time) - new Date(b.time));
+  return out;
+}
+
+/* =========== Fetch candle data from Alpha Vantage ============ */
+async function fetchCandlesAlphaVantage(symbol, interval){
+  if(!ALPHA_VANTAGE_KEY || ALPHA_VANTAGE_KEY === 'YOUR_KEY_HERE'){
+    alert('Please replace ALPHA_VANTAGE_KEY with your free key in the HTML.');
+    throw new Error('Missing API key');
+  }
+
+  // Many forex pair tickers are like "EURUSD". Alpha Vantage expects "EURUSD" for Forex via FX_INTRADAY or "USD" pairs via symbol parameter in other endpoints.
+  // We'll try FX_INTRADAY first (function=FX_INTRADAY supports from Alpha Vantage for forex).
+  // For cryptocurrencies or stocks, the endpoint differs. We'll attempt a few fallbacks.
+
+  // Try 1: FX_INTRADAY (for forex & XAU/XAG)
+  const urlFx = `https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=${symbol.slice(0,3)}&to_symbol=${symbol.slice(3)}&interval=${interval}&outputsize=compact&apikey=${ALPHA_VANTAGE_KEY}`;
+  try {
+    const r = await fetch(urlFx);
+    const j = await r.json();
+    if(Object.keys(j).length && !j['Note'] && !j['Error Message']){
+      const parsed = parseAlphaVantageIntraday(j, interval);
+      if(parsed && parsed.length) return parsed;
+    }
+  } catch(e){ /* fallback below */ }
+
+  // Try 2: DIGITAL_CURRENCY_INTRADAY (for crypto, but alpha v may not support intraday crypto)
+  // Try 3: TIME_SERIES_INTRADAY (for stocks)
+  const urlStock = `https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=${symbol}&interval=${interval}&outputsize=compact&apikey=${ALPHA_VANTAGE_KEY}`;
+  try {
+    const r2 = await fetch(urlStock);
+    const j2 = await r2.json();
+    const parsed2 = parseAlphaVantageIntraday(j2, interval);
+    if(parsed2 && parsed2.length) return parsed2;
+  } catch(e){}
+
+  // If we reached here, no data
+  return null;
+}
+
+/* =========== Prediction logic ============ */
+function computePrediction(candles, target){
+  // candles: array sorted ascending (oldest -> newest)
+  // target: 'current' or 'next'
+  if(!candles || candles.length < 5) return {dir:'—',confidence:0,explain:'not enough data'};
+
+  // Use last N closes for EMA
+  const closes = candles.map(c=>c.close);
+  const emaShort = ema(closes, 8);
+  const emaLong = ema(closes, 21);
+
+  // last candle
+  const last = candles[candles.length-1];
+  const prev = candles[candles.length-2];
+
+  // momentum: slope of last 3 closes
+  const n=3;
+  const slice = closes.slice(-n);
+  const slope = (slice[slice.length-1] - slice[0]) / slice.length;
+
+  // base direction from ema crossover
+  let dir = '—';
+  if(emaShort && emaLong){
+    if(emaShort > emaLong) dir = 'UP';
+    else if(emaShort < emaLong) dir = 'DOWN';
+  }
+
+  // strengthen base using last candle and slope
+  let score = 50; // base
+  if(dir==='UP'){
+    score += Math.min(40, Math.abs((emaShort-emaLong)/emaLong*100)*5);
+    if(last.close > last.open) score += 10;
+    if(slope>0) score += Math.min(15, slope*100);
+  } else if(dir==='DOWN'){
+    score -= Math.min(40, Math.abs((emaShort-emaLong)/emaLong*100)*5);
+    if(last.close < last.open) score -= 10;
+    if(slope<0) score -= Math.min(15, Math.abs(slope*100));
+  } else {
+    // neutral fallback based on last candle
+    if(last.close > last.open) { dir='UP'; score += 5; }
+    else { dir='DOWN'; score -= 5; }
+  }
+
+  // If target is 'next', add a small uncertainty penalty
+  if(target === 'next') {
+    score = score*0.92; // reduce confidence a bit
+  }
+
+  // Normalize to 0-100
+  const conf = Math.max(1, Math.min(99, Math.round(Math.abs(score))));
+  return {dir, confidence: conf, explain:`emaShort:${emaShort?.toFixed(5)||'n/a'} emaLong:${emaLong?.toFixed(5)||'n/a'}`};
+}
+
+/* =========== Render & loop ============ */
+let autoInterval = null;
+let countdownInterval = null;
+
+async function refreshAndPredict(){
+  try {
+    const symbol = symbolSelect.value;
+    const interval = intervalInput.value;
+    const target = targetInput.value;
+    const expiry = parseInt(expiryInput.value,10) || 60;
+
+    lastUpdateEl.textContent = `Last update: ${new Date().toLocaleTimeString()}`;
+
+    const candles = await fetchCandlesAlphaVantage(symbol, interval);
+    if(!candles){ alert('No data returned for ' + symbol + ' — try another symbol or check your API key.'); return; }
+
+    // feed chart (convert time to unix or date string)
+    const chartData = candles.map(c=>({
+      time: c.time.replace(' ', 'T'),
+      open: c.open, high:c.high, low:c.low, close:c.close
+    }));
+    candleSeries.setData(chartData);
+
+    // compute prediction
+    const pred = computePrediction(candles, target);
+    showPrediction(pred, candles, target, expiry);
+  } catch(err){
+    console.error(err);
+    alert('Error fetching/predicting: ' + err.message);
+  }
+}
+
+function showPrediction(pred, candles, target, expiry){
+  // display badge
+  directionEl.className = 'pred-badge';
+  if(pred.dir==='UP'){ directionEl.classList.add('pred-up'); directionEl.textContent = 'UP ▲'; }
+  else if(pred.dir==='DOWN'){ directionEl.classList.add('pred-down'); directionEl.textContent = 'DOWN ▼'; }
+  else { directionEl.textContent = '—'; }
+
+  confidenceEl.textContent = `Confidence: ${pred.confidence}% • ${pred.explain}`;
+
+  // countdown: calculate seconds left in the candle or until next candle completes.
+  if(countdownInterval) clearInterval(countdownInterval);
+  updateCountdown(candles, target, expiry);
+  countdownInterval = setInterval(()=> updateCountdown(candles, target, expiry), 500);
+}
+
+function updateCountdown(candles, target, expiry){
+  // candles last item = current candle (may be still forming depending on provider)
+  const interval = intervalInput.value; // e.g. '1min'
+  const last = candles[candles.length-1];
+  // Determine timeframe seconds
+  const secs = parseInt(interval.replace('min',''))*60;
+  // compute next candle close time: take last.time then + secs
+  const lastTime = new Date(last.time.replace(' ', 'T'));
+  const nextClose = new Date(lastTime.getTime() + secs*1000);
+  const now = new Date();
+  let remainingMs;
+  if(target==='current'){
+    // time until current candle closes
+    remainingMs = nextClose - now;
+  } else {
+    // time until next candle closes = nextClose + secs - now
+    remainingMs = (nextClose.getTime() + secs*1000) - now.getTime();
+  }
+  if(remainingMs < 0) remainingMs = 0;
+  const s = Math.floor(remainingMs/1000);
+  countdownEl.textContent = `Countdown: ${s}s`;
+}
+
+/* Buttons */
+refreshBtn.addEventListener('click', ()=> refreshAndPredict());
+startBtn.addEventListener('click', ()=>{
+  if(autoInterval){
+    clearInterval(autoInterval);
+    autoInterval = null;
+    startBtn.textContent = 'Start Auto';
+  } else {
+    // auto refresh every interval timeframe seconds (but at least 10s)
+    const ivSec = Math.max(10, Math.parseInt ? Math.parseInt(expiryInput.value,10) : parseInt(expiryInput.value,10) || 60);
+    autoInterval = setInterval(refreshAndPredict, ivSec*1000);
+    startBtn.textContent = 'Stop Auto';
+    refreshAndPredict();
+  }
+});
+
+/* start once */
+refreshAndPredict();
+</script>
+</body>
+</html>

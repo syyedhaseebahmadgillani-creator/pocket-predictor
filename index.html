@@ -566,6 +566,39 @@ modelStatusEl.textContent = 'No model loaded';
 refreshAndPredict();
 window.addEventListener('load', ()=> setTimeout(()=> refreshAndPredict(), 800) );
 
+/* =================== Analyze Uploaded Screenshot =================== */
+const analyzeBtn = document.createElement('button');
+analyzeBtn.textContent = 'Analyze Screenshot';
+analyzeBtn.style.marginTop = '10px';
+analyzeBtn.style.padding = '8px 16px';
+analyzeBtn.style.background = 'var(--accent)';
+analyzeBtn.style.color = '#fff';
+analyzeBtn.style.border = 'none';
+analyzeBtn.style.borderRadius = '8px';
+analyzeBtn.style.cursor = 'pointer';
+imagePreview.parentElement.appendChild(analyzeBtn);
+
+analyzeBtn.addEventListener('click', async () => {
+  if (!lastUploadedImage) {
+    alert('Please upload a screenshot first.');
+    return;
+  }
+
+  directionEl.textContent = 'Analyzing...';
+  directionEl.className = 'pred-badge';
+  explainEl.textContent = 'Processing screenshot...';
+
+  try {
+    const visual = await predictVisualHybrid();
+    const explain = `Visual-only prediction from screenshot — direction: ${visual.dir}, confidence: ${visual.confidence}%`;
+    showFinal({ dir: visual.dir, confidence: visual.confidence, explain });
+    explainEl.textContent = explain;
+  } catch (err) {
+    console.error(err);
+    alert('Failed to analyze screenshot: ' + err.message);
+  }
+});
+
 /* =================== End =================== */
 </script>
 </body>

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+  <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -36,7 +36,6 @@
       <option value="GBPUSD">GBP/USD</option>
       <option value="USDJPY">USD/JPY</option>
       <option value="XAUUSD">Gold (XAU/USD)</option>
-      <option value="USOIL">Crude Oil (USOIL)</option>
       <option value="BTCUSD">Bitcoin (BTC/USD)</option>
     </select>
     <button id="fetchData">Get Prediction</button>
@@ -61,7 +60,7 @@
   </div>
 
   <script>
-  const API_KEY = "d3t7e59r01qtes8uqkmgd3t7e59r01qtes8uqkn0";
+  const API_KEY = "d3t7e59r01qtes8uqkn0"; // ✅ your correct key here
   const CACHE_TTL = 60 * 1000;
   const chartDiv = document.getElementById('chart');
   const predictionEl = document.getElementById('prediction');
@@ -83,18 +82,21 @@
       "GBPUSD": { symbol: "OANDA:GBP_USD", type: "forex" },
       "USDJPY": { symbol: "OANDA:USD_JPY", type: "forex" },
       "XAUUSD": { symbol: "OANDA:XAU_USD", type: "forex" },
-      "USOIL":  { symbol: "OANDA:WTICO_USD", type: "forex" },
       "BTCUSD": { symbol: "BINANCE:BTCUSDT", type: "crypto" }
     };
 
-    const { symbol: finSymbol, type } = map[symbol] || map["EURUSD"];
-    const endpoint = type === "crypto" ? "crypto/candle" : "forex/candle";
-    const url = `https://finnhub.io/api/v1/${endpoint}?symbol=${finSymbol}&resolution=1&count=200&token=${API_KEY}`;
+    const pair = map[symbol];
+    if (!pair) throw new Error("Symbol not supported or unavailable.");
+
+    const endpoint = pair.type === "crypto" ? "crypto/candle" : "forex/candle";
+    const url = `https://finnhub.io/api/v1/${endpoint}?symbol=${pair.symbol}&resolution=1&count=200&token=${API_KEY}`;
 
     const res = await fetch(url);
     const json = await res.json();
 
-    if (!json.c || !json.t) throw new Error("No data returned. Check API key or symbol.");
+    if (!json || !json.c || json.s !== "ok") {
+      throw new Error("⚠️ No data returned. Check API key or symbol format.");
+    }
 
     const data = json.t.map((t, i) => ({
       time: t,
@@ -158,7 +160,7 @@
       predictionEl.className = "pred-badge " + (direction === "UP" ? "up" : "down");
       explainEl.textContent = explain;
     } catch (err) {
-      predictionEl.textContent = "⚠️ " + err.message;
+      predictionEl.textContent = err.message;
       predictionEl.className = "pred-badge down";
     }
   }

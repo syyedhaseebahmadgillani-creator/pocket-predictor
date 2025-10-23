@@ -1,605 +1,203 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Pocket Option — Hybrid Predictor (Indicators + Trainable TF)</title>
-  <meta name="robots" content="noindex,nofollow"/>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Pocket Option Prediction Bot</title>
   <style>
-    :root{--bg:#071024;--card:#0b1220;--accent:#10b981;--muted:#94a3b8;--glass:rgba(255,255,255,0.03)}
-    body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:0;background:linear-gradient(180deg,#071024,#071725);color:#e6eef7;min-height:100vh}
-    .wrap{max-width:980px;margin:18px auto;padding:16px}
-    header{display:flex;gap:12px;align-items:center;justify-content:space-between}
-    h1{font-size:18px;margin:0;color:var(--accent)}
-    .muted{color:var(--muted);font-size:13px}
-    .card{background:var(--card);border-radius:12px;padding:12px;box-shadow:0 6px 20px rgba(2,6,23,0.6);margin-top:12px}
-    .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-    select,input,button{background:var(--glass);border:1px solid rgba(255,255,255,0.03);color:inherit;padding:8px;border-radius:8px}
-    button{cursor:pointer}
-    #chart{height:320px;border-radius:8px;overflow:hidden}
-    .prediction{margin-top:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-    .pred-badge{padding:10px 16px;border-radius:10px;font-weight:700}
-    .pred-up{background:linear-gradient(90deg,rgba(16,185,129,0.12),rgba(16,185,129,0.06));color:#86f0c9}
-    .pred-down{background:linear-gradient(90deg,rgba(239,68,68,0.06),rgba(239,68,68,0.02));color:#ffb3b3}
-    .small{font-size:13px;color:var(--muted)}
-    label{display:block;font-size:13px;color:var(--muted);margin-bottom:4px}
-    .col{display:flex;flex-direction:column}
-    .row{display:flex;gap:8px;align-items:center}
-    .half{flex:1}
-    .image-preview img{max-width:100%;border-radius:8px;border:2px solid #0b7a53}
-    .dataset-controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-    .danger{background:#dc2626;color:white}
-    @media(max-width:700px){.controls{flex-direction:column}}
+    body { font-family: Arial, sans-serif; background: #f8fafc; color: #111; margin: 0; padding: 20px; }
+    h1 { color: #007a6a; text-align: center; }
+    .section { background: #fff; padding: 20px; margin: 15px auto; border-radius: 10px; max-width: 800px; box-shadow: 0 0 8px rgba(0,0,0,0.1); }
+    select, button { padding: 8px 12px; border-radius: 6px; border: 1px solid #ccc; margin: 6px 0; }
+    button { background: #007a6a; color: #fff; border: none; cursor: pointer; }
+    canvas { display: block; margin: 10px auto; background: #000; border-radius: 10px; }
+    #prediction { font-size: 18px; font-weight: bold; margin-top: 10px; }
+    #imagePreview { width: 300px; height: 150px; border: 2px dashed #aaa; display: block; margin: 10px auto; object-fit: contain; }
+    .result { text-align: center; margin-top: 10px; }
+    .pred-badge { display: inline-block; padding: 6px 12px; border-radius: 6px; }
+    .up { background: #2ecc71; color: #fff; }
+    .down { background: #e74c3c; color: #fff; }
   </style>
 
-  <!-- libs -->
-  <script src="https://unpkg.com/lightweight-charts@4.1.6/dist/lightweight-charts.standalone.production.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.9.0/dist/tf.min.js"></script>
+  <!-- Load TensorFlow.js + Lightweight Charts -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.0.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
-  <div class="wrap">
-    <header>
-      <div>
-        <h1>Pocket Option — Hybrid Predictor</h1>
-        <div class="small">Indicators (EMA/RSI/MACD) + Trainable TF visual model (client-side)</div>
-      </div>
-      <div class="small">Free • Runs in your browser</div>
-    </header>
 
-    <!-- Controls -->
-    <div class="card">
-      <div class="controls">
-        <div class="col" style="min-width:160px">
-          <label for="symbol">Asset</label>
-          <select id="symbol"></select>
-        </div>
+  <h1>Pocket Option Prediction Bot</h1>
 
-        <div class="col" style="width:120px">
-          <label for="interval">Timeframe</label>
-          <select id="interval">
-            <option value="1min">1m</option>
-            <option value="5min">5m</option>
-            <option value="15min">15m</option>
-            <option value="30min">30m</option>
-            <option value="60min">60m</option>
-          </select>
-        </div>
+  <div class="section">
+    <h2>Market Selection</h2>
+    <select id="symbol">
+      <option value="EURUSD">EUR/USD</option>
+      <option value="GBPUSD">GBP/USD</option>
+      <option value="USDJPY">USD/JPY</option>
+      <option value="XAUUSD">Gold (XAU/USD)</option>
+      <option value="USOIL">Crude Oil (USOIL)</option>
+      <option value="BTCUSD">Bitcoin (BTC/USD)</option>
+    </select>
+    <button id="fetchData">Get Prediction</button>
 
-        <div class="col" style="width:140px">
-          <label for="target">Predict</label>
-          <select id="target">
-            <option value="current">Current candle</option>
-            <option value="next">Next candle</option>
-          </select>
-        </div>
+    <div id="chart" style="height:300px;margin-top:10px;"></div>
 
-        <div class="col" style="width:140px">
-          <label for="expiry">Expiry (seconds)</label>
-          <input id="expiry" type="number" value="60" min="5" step="5" />
-        </div>
-
-        <div class="row" style="margin-left:auto">
-          <button id="refresh">Refresh</button>
-          <button id="start">Start Auto</button>
-        </div>
-      </div>
+    <div class="result">
+      <div id="prediction">Waiting for data...</div>
+      <div id="explain"></div>
     </div>
-
-    <!-- Chart -->
-    <div class="card">
-      <div id="chart"></div>
-      <div class="prediction">
-        <div id="direction" class="pred-badge">—</div>
-        <div class="small" id="confidence">Confidence: —</div>
-        <div class="small" id="countdown">Countdown: —</div>
-        <div class="small" id="last-update">Last update: —</div>
-      </div>
-      <div class="small" id="explain" style="margin-top:8px"></div>
-    </div>
-
-    <!-- Visual dataset / training -->
-    <div class="card">
-      <h3 style="margin:0 0 8px 0;color:var(--accent)">Visual: Upload & Train (optional)</h3>
-
-      <div class="controls">
-        <div class="col half">
-          <label for="screenshot">Upload screenshot</label>
-          <input type="file" id="screenshot" accept="image/*" />
-          <div class="small" style="margin-top:6px">Upload chart screenshots and label them to train the visual model.</div>
-        </div>
-
-        <div class="col" style="min-width:180px">
-          <label>&nbsp;</label>
-          <div class="dataset-controls">
-            <button id="labelUp">Label as UP</button>
-            <button id="labelDown">Label as DOWN</button>
-            <button id="clearDataset" class="danger">Clear Dataset</button>
-          </div>
-        </div>
-
-        <div class="col" style="min-width:220px">
-          <label>&nbsp;</label>
-          <div class="dataset-controls">
-            <button id="trainModel">Train Model</button>
-            <button id="saveModel">Save Model</button>
-            <button id="loadModel">Load Model</button>
-          </div>
-        </div>
-      </div>
-
-      <div style="display:flex;gap:12px;margin-top:12px;align-items:flex-start">
-        <div style="flex:1">
-          <div id="imagePreview" class="image-preview"></div>
-        </div>
-        <div style="width:320px">
-          <div class="small">Dataset sizes</div>
-          <div id="dsStats" class="small">UP: 0 • DOWN: 0</div>
-          <div style="height:12px"></div>
-          <div class="small">Model status</div>
-          <div id="modelStatus" class="small">No model loaded</div>
-          <div style="height:8px"></div>
-          <div class="small">Blending weights</div>
-          <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
-            <label class="small">Indicators</label>
-            <input id="wIndicators" type="number" value="0.6" step="0.1" min="0" max="1" style="width:70px" />
-            <label class="small">Visual</label>
-            <input id="wVisual" type="number" value="0.4" step="0.1" min="0" max="1" style="width:70px" />
-          </div>
-          <div style="height:8px"></div>
-          <div class="small">Quick tips: label clear screenshots, balance UP/DOWN examples, start with 30–100 images for best effect.</div>
-        </div>
-      </div>
-    </div>
-
-    <footer style="margin-top:12px" class="small">
-      Data: Alpha Vantage (client-side). Keep API key usage low — free tier ~5 calls/min. Model and dataset are stored locally in your browser.
-    </footer>
   </div>
 
-<script>
-/* =================== CONFIG =================== */
-const ALPHA_VANTAGE_KEY = 'EE28K6YNF9TZFDKA';
-const RATE_LIMIT_MAX_PER_MIN = 5;
-const SYMBOLS = [
-  'EURUSD','GBPUSD','USDJPY','USDCHF','AUDUSD','USDCAD','NZDUSD','GBPJPY',
-  'XAUUSD','XAGUSD','BTCUSD','ETHUSD','AAPL','TSLA','MSFT'
-];
-const TTL_MAP = { '1min': 12*1000, '5min': 30*1000, '15min': 60*1000, '30min': 90*1000, '60min': 150*1000 };
+  <div class="section">
+    <h2>Upload Chart Screenshot</h2>
+    <input type="file" id="screenshotInput" accept="image/*">
+    <canvas id="imagePreview"></canvas>
+    <button id="analyzeBtn">Analyze Screenshot</button>
+    <div class="result">
+      <div id="imgPrediction"></div>
+      <div id="imgExplain"></div>
+    </div>
+  </div>
 
-/* =================== UI refs =================== */
-const symbolSelect = document.getElementById('symbol');
-const intervalInput = document.getElementById('interval');
-const targetInput = document.getElementById('target');
-const expiryInput = document.getElementById('expiry');
-const refreshBtn = document.getElementById('refresh');
-const startBtn = document.getElementById('start');
-const directionEl = document.getElementById('direction');
-const confidenceEl = document.getElementById('confidence');
-const countdownEl = document.getElementById('countdown');
-const lastUpdateEl = document.getElementById('last-update');
-const explainEl = document.getElementById('explain');
+  <script>
+    const API_KEY = "EE28K6YNF9TZFDKA";
+    const CACHE_TTL = 60 * 1000; // 1 min cache
+    const chartDiv = document.getElementById('chart');
+    const predictionEl = document.getElementById('prediction');
+    const explainEl = document.getElementById('explain');
+    let chart, candleSeries;
+    const cache = {};
 
-const screenshotInput = document.getElementById('screenshot');
-const imagePreview = document.getElementById('imagePreview');
-const labelUpBtn = document.getElementById('labelUp');
-const labelDownBtn = document.getElementById('labelDown');
-const clearDatasetBtn = document.getElementById('clearDataset');
-const dsStatsEl = document.getElementById('dsStats');
-const trainBtn = document.getElementById('trainModel');
-const saveBtn = document.getElementById('saveModel');
-const loadBtn = document.getElementById('loadModel');
-const modelStatusEl = document.getElementById('modelStatus');
-const analyzeVisualBtn = document.getElementById('analyzeVisual'); // legacy may not exist
-const visualResultEl = document.getElementById('visualResult');
-const wIndicatorsInput = document.getElementById('wIndicators');
-const wVisualInput = document.getElementById('wVisual');
-
-/* populate symbols */
-SYMBOLS.forEach(s => {
-  const o = document.createElement('option'); o.value = s; o.textContent = s; symbolSelect.appendChild(o);
-});
-
-/* =================== Chart (Lightweight Charts) =================== */
-let chart, candleSeries;
-function createChart(){
-  const container = document.getElementById('chart');
-  container.innerHTML = '';
-  chart = LightweightCharts.createChart(container, {
-    layout:{ background:{ color:'#071025'}, textColor:'#dbeafe'},
-    rightPriceScale:{ visible:true},
-    timeScale:{ timeVisible:true, secondsVisible:false}
-  });
-  candleSeries = chart.addCandlestickSeries();
-}
-createChart();
-
-/* =================== Rate-limit & cache =================== */
-function getCallRecords(){ try{ const r = localStorage.getItem('av_call_times'); return r?JSON.parse(r):[] }catch(e){return[]} }
-function pushCallRecord(ts){ const rec = getCallRecords().filter(t=>t>Date.now()-61*1000); rec.push(ts); localStorage.setItem('av_call_times', JSON.stringify(rec)); }
-function callsInLastMinute(){ return getCallRecords().filter(t=>t>Date.now()-61*1000).length; }
-function cacheKey(symbol, interval){ return `candles_${symbol}_${interval}`; }
-function putCache(symbol, interval, data){ try{ localStorage.setItem(cacheKey(symbol,interval), JSON.stringify({ts:Date.now(),data})); }catch(e){} }
-function getCache(symbol, interval){ try{ const raw = localStorage.getItem(cacheKey(symbol,interval)); if(!raw) return null; const p = JSON.parse(raw); const ttl = TTL_MAP[interval] || 15000; return (Date.now()-p.ts>ttl)?null:p.data;}catch(e){return null} }
-
-/* =================== AlphaV fetch =================== */
-async function fetchCandlesAlphaVantage(symbol, interval){
-  const cached = getCache(symbol, interval);
-  if(cached) return cached;
-  if(callsInLastMinute() >= RATE_LIMIT_MAX_PER_MIN){
-    // fallback to stale cached if exists
-    const raw = localStorage.getItem(cacheKey(symbol, interval));
-    if(raw){ const p = JSON.parse(raw); explainEl.textContent = 'Rate limit — using stale cache.'; return p.data; }
-    throw new Error('Rate limit reached — wait a bit.');
-  }
-
-  // forex attempt
-  const from = symbol.slice(0,3), to = symbol.slice(3);
-  let url = `https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=${from}&to_symbol=${to}&interval=${interval}&outputsize=compact&apikey=${ALPHA_VANTAGE_KEY}`;
-  try{
-    pushCallRecord(Date.now());
-    const r = await fetch(url);
-    const j = await r.json();
-    if(j['Note']) throw new Error(j['Note']);
-    const parsed = parseAlphaVantageIntraday(j);
-    if(parsed && parsed.length){ putCache(symbol, interval, parsed); return parsed; }
-  }catch(e){ /* fallback */ }
-
-  // stock fallback
-  url = `https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=${symbol}&interval=${interval}&outputsize=compact&apikey=${ALPHA_VANTAGE_KEY}`;
-  try{
-    pushCallRecord(Date.now());
-    const r2 = await fetch(url);
-    const j2 = await r2.json();
-    if(j2['Note']) throw new Error(j2['Note']);
-    const parsed2 = parseAlphaVantageIntraday(j2);
-    if(parsed2 && parsed2.length){ putCache(symbol, interval, parsed2); return parsed2; }
-  }catch(e){ /* final */ }
-
-  throw new Error('No data for ' + symbol);
-}
-function parseAlphaVantageIntraday(json){
-  const key = Object.keys(json).find(k=>k.toLowerCase().includes('time series'));
-  if(!key) return null;
-  const series = json[key];
-  const out = [];
-  for(const t in series){
-    const d = series[t];
-    out.push({ time: t, open: parseFloat(d['1. open']), high: parseFloat(d['2. high']), low: parseFloat(d['3. low']), close: parseFloat(d['4. close']), volume: parseFloat(d['5. volume']||0) });
-  }
-  out.sort((a,b)=> new Date(a.time) - new Date(b.time));
-  return out;
-}
-
-/* =================== Indicators (EMA/RSI/MACD) =================== */
-function emaArray(values, period){
-  const out = []; if(values.length < period) return out;
-  const k = 2/(period+1); let prev = values.slice(0,period).reduce((a,b)=>a+b,0)/period; out[period-1]=prev;
-  for(let i=period;i<values.length;i++){ prev = values[i]*k + prev*(1-k); out[i]=prev; } return out;
-}
-function ema(values, period){ const arr = emaArray(values, period); return arr.length?arr[arr.length-1]:null; }
-function computeRSI(closes, period=14){
-  if(closes.length < period+1) return null;
-  let gains=0, losses=0;
-  for(let i=1;i<=period;i++){ const d=closes[closes.length - 1 - (period - i)]; const prev=closes[closes.length - 2 - (period - i)]; const diff=d-prev; if(diff>0)gains+=diff;else losses+=Math.abs(diff); }
-  const avgG=gains/period, avgL=losses/period; if(avgL===0) return 100; const rs=avgG/avgL; return 100 - (100/(1+rs));
-}
-function computeMACD(closes, fast=12, slow=26, signal=9){
-  if(closes.length < slow + signal) return null;
-  const emaF = emaArray(closes, fast), emaS = emaArray(closes, slow);
-  const macd = [];
-  for(let i=0;i<closes.length;i++){ if(emaF[i] && emaS[i]) macd[i] = emaF[i] - emaS[i]; }
-  const signalArr = emaArray(macd.filter(v=>v!==undefined), signal);
-  const lastMacd = macd[macd.length-1]; const lastSignal = signalArr[signalArr.length-1];
-  if(lastMacd===undefined || lastSignal===undefined) return null;
-  return { macd: lastMacd, signal: lastSignal, hist: lastMacd - lastSignal };
-}
-
-/* =================== Better calibrated indicator scoring =================== */
-function computeIndicatorPrediction(candles, target){
-  if(!candles || candles.length < 30) return {dir:'—',confidence:0,explain:'insufficient data for indicators'};
-  const closes = candles.map(c=>c.close);
-  const ema8 = ema(closes,8), ema21=ema(closes,21);
-  const rsi = computeRSI(closes,14);
-  const macdObj = computeMACD(closes,12,26,9);
-  const last = candles[candles.length-1], prev = candles[candles.length-2];
-  let score = 50, factors=[];
-  if(ema8 && ema21){ if(ema8>ema21){ score += 15; factors.push('EMA up'); } else { score -= 15; factors.push('EMA down'); } }
-  if(macdObj){ if(macdObj.macd > macdObj.signal){ score += 10; factors.push('MACD bullish'); } else { score -= 10; factors.push('MACD bear'); } }
-  if(rsi !== null){ if(rsi < 35){ score += 10; factors.push('RSI oversold'); } else if(rsi > 65){ score -= 10; factors.push('RSI overbought'); } }
-  const body = last.close - last.open; if(body>0){ score += 5; factors.push('Bull candle'); } else if(body<0){ score -=5; factors.push('Bear candle'); }
-  if(target==='next') score *= 0.95;
-  const conf = Math.min(99, Math.max(1, Math.round(Math.abs(score - 50) * 2)));
-  const finalDir = score >= 50 ? 'UP' : 'DOWN';
-  const explain = factors.join(', ') + ` | RSI:${rsi?rsi.toFixed(1):'n/a'} MACD_hist:${macdObj?macdObj.hist.toFixed(3):'n/a'}`;
-  return { dir: finalDir, confidence: conf, explain, rawScore: score };
-}
-
-/* =================== Countdown =================== */
-let countdownInterval = null;
-function updateCountdown(candles, target){
-  if(countdownInterval) clearInterval(countdownInterval);
-  function tick(){
-    const interval = intervalInput.value;
-    const last = candles[candles.length-1];
-    const secs = parseInt(interval.replace('min',''))*60;
-    const lastTime = new Date(last.time.replace(' ', 'T'));
-    const nextClose = new Date(lastTime.getTime() + secs*1000);
-    const now = new Date();
-    let remainingMs = (target === 'current') ? (nextClose - now) : (nextClose.getTime() + secs*1000 - now.getTime());
-    if(remainingMs < 0) remainingMs = 0;
-    const s = Math.floor(remainingMs/1000);
-    countdownEl.textContent = `Countdown: ${s}s`;
-  }
-  tick(); countdownInterval = setInterval(tick, 500);
-}
-
-/* =================== Main refresh & combine =================== */
-async function refreshAndPredict(){
-  try{
-    explainEl.textContent = ''; lastUpdateEl.textContent = `Last update: ${new Date().toLocaleTimeString()}`;
-    const symbol = symbolSelect.value; const interval = intervalInput.value; const target = targetInput.value;
-    const candles = await fetchCandlesAlphaVantage(symbol, interval);
-    if(!candles || candles.length===0) throw new Error('No candles');
-
-    // update chart
-    const data = candles.map(c=>({ time: c.time.replace(' ', 'T'), open:c.open, high:c.high, low:c.low, close:c.close }));
-    candleSeries.setData(data);
-
-    // indicator result
-    const ind = computeIndicatorPrediction(candles, target);
-
-    // visual model result: either trained model or heuristic
-    const visual = await predictVisualHybrid();
-
-    // blending weights (UI)
-    let wi = parseFloat(wIndicatorsInput.value) || 0.6;
-    let wv = parseFloat(wVisualInput.value) || 0.4;
-    // normalize
-    const sum = wi + wv; if(sum>0){ wi/=sum; wv/=sum; } else { wi=0.6; wv=0.4; }
-
-    // combine confidences into final score (ind.confidence and visual.confidence are in 0..100)
-    const finalScore = Math.round(ind.confidence * wi + visual.confidence * wv);
-    const finalDir = (ind.dir === visual.dir) ? ind.dir : (finalScore >= 50 ? ind.dir : visual.dir);
-    const finalExplain = `Indicators: ${ind.dir} ${ind.confidence}% • Visual: ${visual.dir} ${visual.confidence}% • blended=${finalScore}% • details: ${ind.explain}`;
-
-    // show result
-    showFinal({ dir: finalDir, confidence: finalScore, explain: finalExplain });
-
-    // countdown
-    updateCountdown(candles, target);
-  }catch(err){
-    alert('Error: ' + (err.message||err)); console.error(err);
-  }
-}
-function showFinal(pred){
-  directionEl.className = 'pred-badge'; if(pred.dir==='UP'){ directionEl.classList.add('pred-up'); directionEl.textContent='UP ▲'; } else { directionEl.classList.add('pred-down'); directionEl.textContent='DOWN ▼'; }
-  confidenceEl.textContent = `Confidence: ${pred.confidence}%`; explainEl.textContent = pred.explain;
-}
-
-/* =================== Auto refresh =================== */
-let autoInterval = null; refreshBtn.addEventListener('click', ()=> refreshAndPredict());
-startBtn.addEventListener('click', ()=>{
-  if(autoInterval){ clearInterval(autoInterval); autoInterval=null; startBtn.textContent='Start Auto'; } else {
-    const sec = Math.max(10, parseInt(expiryInput.value,10)||60);
-    autoInterval = setInterval(refreshAndPredict, sec*1000);
-    startBtn.textContent='Stop Auto'; refreshAndPredict();
-  }
-});
-
-/* =================== Visual model: dataset in-memory & tf model =================== */
-const IMG_SIZE = 64; // 64x64 input
-let dsUp = []; // array of image tensors (Float32Array) for UP
-let dsDown = [];
-function updateDsStats(){ dsStatsEl.textContent = `UP: ${dsUp.length} • DOWN: ${dsDown.length}`; }
-function dataURLToImage(url){ return new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=url; }); }
-
-screenshotInput.addEventListener('change', async (e)=>{
-  const f = e.target.files && e.target.files[0]; if(!f) return;
-  const url = URL.createObjectURL(f); const img = new Image();
-  img.onload = ()=>{ imagePreview.innerHTML=''; img.style.maxWidth='100%'; img.style.borderRadius='8px'; img.style.border='2px solid #10b981'; imagePreview.appendChild(img); lastUploadedImage = img; };
-  img.src = url;
-});
-
-let lastUploadedImage = null;
-labelUpBtn.addEventListener('click', async ()=>{
-  if(!screenshotInput.files[0]) return alert('Upload an image first');
-  const img = await dataURLToImage(URL.createObjectURL(screenshotInput.files[0]));
-  const t = preprocessImageTensor(img);
-  dsUp.push(t); updateDsStats(); alert('Labeled as UP');
-});
-labelDownBtn.addEventListener('click', async ()=>{
-  if(!screenshotInput.files[0]) return alert('Upload an image first');
-  const img = await dataURLToImage(URL.createObjectURL(screenshotInput.files[0]));
-  const t = preprocessImageTensor(img);
-  dsDown.push(t); updateDsStats(); alert('Labeled as DOWN');
-});
-clearDatasetBtn.addEventListener('click', ()=>{ if(confirm('Clear local dataset?')){ dsUp.forEach(t=>t.dispose()); dsDown.forEach(t=>t.dispose()); dsUp=[]; dsDown=[]; updateDsStats(); localStorage.removeItem('visual_model_ds'); alert('Dataset cleared'); } });
-
-/* preprocess: returns tensor shape [IMG_SIZE,IMG_SIZE,3] normalized 0..1 */
-function preprocessImageTensor(img){
-  const tmp = document.createElement('canvas');
-  tmp.width = IMG_SIZE; tmp.height = IMG_SIZE;
-  const ctx = tmp.getContext('2d'); ctx.drawImage(img, 0, 0, IMG_SIZE, IMG_SIZE);
-  const imgData = ctx.getImageData(0,0,IMG_SIZE,IMG_SIZE);
-  // create tensor from pixels
-  const t = tf.browser.fromPixels(imgData).toFloat().div(255.0);
-  return t;
-}
-
-/* build model (small conv net) */
-function createVisualModel(){
-  const model = tf.sequential();
-  model.add(tf.layers.conv2d({ inputShape: [IMG_SIZE, IMG_SIZE, 3], filters: 16, kernelSize: 3, activation: 'relu' }));
-  model.add(tf.layers.maxPool2d({ poolSize: 2 }));
-  model.add(tf.layers.conv2d({ filters: 32, kernelSize: 3, activation: 'relu' }));
-  model.add(tf.layers.maxPool2d({ poolSize: 2 }));
-  model.add(tf.layers.flatten());
-  model.add(tf.layers.dense({ units: 64, activation: 'relu' }));
-  model.add(tf.layers.dropout({ rate: 0.25 }));
-  model.add(tf.layers.dense({ units: 1, activation: 'sigmoid' })); // output [0..1] where >0.5 => UP
-  model.compile({ optimizer: tf.train.adam(0.0008), loss: 'binaryCrossentropy', metrics: ['accuracy'] });
-  return model;
-}
-
-let visualModel = null;
-let modelTrained = false;
-
-/* train routine */
-trainBtn.addEventListener('click', async ()=>{
-  if(dsUp.length + dsDown.length < 10) return alert('Add at least 10 labeled images (balanced recommended).');
-  try{
-    trainBtn.disabled = true; trainBtn.textContent = 'Training…';
-    if(!visualModel) visualModel = createVisualModel();
-    // prepare x,y
-    const xs = tf.concat([ tf.stack(dsUp), tf.stack(dsDown) ], 0); // shape [N, H, W, 3]
-    const ysUp = tf.ones([dsUp.length, 1]); const ysDown = tf.zeros([dsDown.length,1]);
-    const ys = tf.concat([ysUp, ysDown], 0);
-    // shuffle
-    const shufIdx = tf.util.createShuffledIndices(xs.shape[0]);
-    const xsSh = tf.gather(xs, shufIdx);
-    const ysSh = tf.gather(ys, shufIdx);
-    // train
-    await visualModel.fit(xsSh, ysSh, { epochs: 12, batchSize: Math.min(16, xs.shape[0]), validationSplit: 0.12, callbacks: { onEpochEnd: (e,l)=>{ modelStatusEl.textContent = `Epoch ${e+1} loss:${l.loss.toFixed(3)} acc:${(l.acc||l.acc||0).toFixed? (l.acc.toFixed(2)) : ''}` } } });
-    modelTrained = true; modelStatusEl.textContent = 'Model trained (in memory)';
-    // cleanup
-    xs.dispose(); ys.dispose(); xsSh.dispose(); ysSh.dispose();
-    trainBtn.disabled = false; trainBtn.textContent = 'Train Model';
-    // save quick snapshot to localStorage automatically
-    await saveModelToLocalStorage();
-    alert('Training complete and model saved locally.');
-  }catch(err){ console.error(err); alert('Training failed: ' + err.message); trainBtn.disabled=false; trainBtn.textContent='Train Model'; }
-});
-
-/* save/load model to localStorage (tfjs offers model.save with 'localstorage://' scheme) */
-saveBtn.addEventListener('click', async ()=> {
-  if(!visualModel) return alert('No model to save.');
-  try{
-    await visualModel.save('localstorage://pocket_visual_model_v1');
-    modelStatusEl.textContent = 'Model saved to browser localStorage';
-    alert('Model saved locally.');
-  }catch(err){ console.error(err); alert('Save failed: ' + err.message); }
-});
-loadBtn.addEventListener('click', async ()=> {
-  try{
-    visualModel = await tf.loadLayersModel('localstorage://pocket_visual_model_v1');
-    modelTrained = true; modelStatusEl.textContent = 'Model loaded from localStorage';
-    alert('Model loaded.');
-  }catch(err){ console.error(err); alert('No saved model found'); }
-});
-
-async function saveModelToLocalStorage(){
-  if(!visualModel) return;
-  try{ await visualModel.save('localstorage://pocket_visual_model_v1'); modelStatusEl.textContent = 'Model saved to localStorage'; }catch(e){ console.error(e); }
-}
-
-/* predict using model if available, otherwise fallback to heuristic visualPredictFromImage */
-async function predictVisualHybrid(){
-  // if there is a lastUploadedImage in preview, use that for visual prediction,
-  // otherwise we produce neutral (50%, no preference) using indicators only.
-  if(!lastUploadedImage && !modelTrained){
-    // fallback heuristic: 50/50 neutral
-    return { dir: '—', confidence: 50 };
-  }
-
-  // if model trained/loaded, use it
-  if(modelTrained && visualModel){
-    try{
-      // use lastUploadedImage if exists, else use small preprocessed version of latest candle chart? We'll prefer uploaded screenshot
-      if(!lastUploadedImage) return { dir:'—', confidence:50 };
-      const t = preprocessImageTensor(lastUploadedImage).expandDims(0); // [1,H,W,3]
-      const y = (await visualModel.predict(t).data())[0]; // 0..1
-      t.dispose();
-      const dir = y >= 0.5 ? 'UP' : 'DOWN';
-      const conf = Math.round(y*100);
-      return { dir, confidence: conf };
-    }catch(err){ console.error(err); return { dir:'—', confidence:50 }; }
-  }
-
-  // else fallback to heuristic TF features (fast) to get visual signal (same as previous heuristic)
-  if(lastUploadedImage){
-    try{
-      const hv = await visualPredictHeuristic(lastUploadedImage);
-      return hv;
-    }catch(e){ console.error(e); return { dir:'—', confidence:50 }; }
-  }
-
-  return { dir:'—', confidence:50 };
-}
-
-/* heuristic visual (fast) - reusing earlier approach but simplified */
-async function visualPredictHeuristic(img){
-  // do quick feature extraction using canvas then small weighting
-  const canvas = document.createElement('canvas'), maxW=300;
-  const scale = Math.min(1, maxW/img.width);
-  canvas.width = Math.round(img.width*scale); canvas.height = Math.round(img.height*scale);
-  const ctx = canvas.getContext('2d'); ctx.drawImage(img,0,0,canvas.width,canvas.height);
-  const id = ctx.getImageData(0,0,canvas.width,canvas.height).data;
-  // compute simple avg brightness left vs right
-  let left=0,right=0, lcount=0, rcount=0;
-  for(let y=0;y<canvas.height;y++){
-    for(let x=0;x<canvas.width;x++){
-      const idx=(y*canvas.width+x)*4; const r=id[idx], g=id[idx+1], b=id[idx+2];
-      const br = 0.299*r + 0.587*g + 0.114*b;
-      if(x < canvas.width/2){ left+=br; lcount++; } else { right+=br; rcount++; }
+    function initChart() {
+      chart = LightweightCharts.createChart(chartDiv, { width: chartDiv.clientWidth, height: 300 });
+      candleSeries = chart.addCandlestickSeries();
     }
-  }
-  const leftAvg = left/lcount, rightAvg = right/rcount;
-  const slope = (rightAvg - leftAvg) / 255; // positive -> right brighter -> upward bias
-  const yscore = (1/(1+Math.exp(- (slope*6)))) ; // sigmoid
-  const dir = yscore >= 0.5 ? 'UP' : 'DOWN';
-  const conf = Math.round(yscore*100);
-  return { dir, confidence: conf };
-}
 
-/* =================== File input handling for preview & dataset =================== */
-screenshotInput.addEventListener('change', (e)=>{
-  const f = e.target.files && e.target.files[0];
-  if(!f) return;
-  const url = URL.createObjectURL(f); const img = new Image();
-  img.onload = ()=>{ imagePreview.innerHTML=''; img.style.maxWidth='100%'; img.style.borderRadius='8px'; img.style.border='2px solid #10b981'; imagePreview.appendChild(img); lastUploadedImage = img; };
-  img.src = url;
-});
+    async function getData(symbol) {
+      const now = Date.now();
+      if (cache[symbol] && now - cache[symbol].time < CACHE_TTL) return cache[symbol].data;
 
-/* =================== Startup =================== */
-updateDsStats();
-modelStatusEl.textContent = 'No model loaded';
-refreshAndPredict();
-window.addEventListener('load', ()=> setTimeout(()=> refreshAndPredict(), 800) );
+      const url = `https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=${symbol.slice(0,3)}&to_symbol=${symbol.slice(3)}&interval=1min&apikey=${API_KEY}`;
+      const res = await fetch(url);
+      const json = await res.json();
+      const key = Object.keys(json).find(k => k.includes('Time Series'));
+      const data = Object.entries(json[key]).map(([time, ohlc]) => ({
+        time: new Date(time).getTime() / 1000,
+        open: parseFloat(ohlc["1. open"]),
+        high: parseFloat(ohlc["2. high"]),
+        low: parseFloat(ohlc["3. low"]),
+        close: parseFloat(ohlc["4. close"])
+      })).reverse();
+      cache[symbol] = { data, time: now };
+      return data;
+    }
 
-/* =================== Analyze Uploaded Screenshot =================== */
-const analyzeBtn = document.createElement('button');
-analyzeBtn.textContent = 'Analyze Screenshot';
-analyzeBtn.style.marginTop = '10px';
-analyzeBtn.style.padding = '8px 16px';
-analyzeBtn.style.background = 'var(--accent)';
-analyzeBtn.style.color = '#fff';
-analyzeBtn.style.border = 'none';
-analyzeBtn.style.borderRadius = '8px';
-analyzeBtn.style.cursor = 'pointer';
-imagePreview.parentElement.appendChild(analyzeBtn);
+    function calcRSI(data, period=14) {
+      let gains = 0, losses = 0;
+      for (let i=1;i<=period;i++){
+        const diff = data[i].close - data[i-1].close;
+        if (diff>=0) gains+=diff; else losses+=Math.abs(diff);
+      }
+      const avgGain = gains/period;
+      const avgLoss = losses/period;
+      const rs = avgGain/avgLoss;
+      return 100 - (100/(1+rs));
+    }
 
-analyzeBtn.addEventListener('click', async () => {
-  if (!lastUploadedImage) {
-    alert('Please upload a screenshot first.');
-    return;
-  }
+    function calcMACD(data, short=12, long=26, signal=9) {
+      function EMA(data, period) {
+        const k = 2/(period+1);
+        let ema = data[0].close;
+        return data.map((v,i)=>{
+          ema = v.close*k + ema*(1-k);
+          return {time:v.time, value:ema};
+        });
+      }
+      const ema12 = EMA(data.slice(-long), short);
+      const ema26 = EMA(data.slice(-long), long);
+      const macdLine = ema12.map((v,i)=>({time:v.time, value:v.value - ema26[i].value}));
+      const signalLine = EMA(macdLine, signal);
+      return macdLine[macdLine.length-1].value - signalLine[signalLine.length-1].value;
+    }
 
-  directionEl.textContent = 'Analyzing...';
-  directionEl.className = 'pred-badge';
-  explainEl.textContent = 'Processing screenshot...';
+    async function predict(symbol) {
+      predictionEl.textContent = "Fetching data...";
+      const data = await getData(symbol);
+      candleSeries.setData(data);
 
-  try {
-    const visual = await predictVisualHybrid();
-    const explain = `Visual-only prediction from screenshot — direction: ${visual.dir}, confidence: ${visual.confidence}%`;
-    showFinal({ dir: visual.dir, confidence: visual.confidence, explain });
-    explainEl.textContent = explain;
-  } catch (err) {
-    console.error(err);
-    alert('Failed to analyze screenshot: ' + err.message);
-  }
-});
+      const rsi = calcRSI(data);
+      const macd = calcMACD(data);
+      const last = data[data.length-1];
+      const prev = data[data.length-2];
+      const trend = last.close > prev.close ? 1 : -1;
 
-/* =================== End =================== */
-</script>
+      let score = (trend*0.4) + ((macd>0?1:-1)*0.3) + ((rsi>50?1:-1)*0.3);
+      const direction = score>0 ? "UP" : "DOWN";
+      const confidence = Math.round(Math.abs(score)*100);
+      const explain = `RSI ${rsi.toFixed(1)}, MACD ${macd.toFixed(3)} — Predicting ${direction}`;
+
+      predictionEl.textContent = direction + " ("+confidence+"%)";
+      predictionEl.className = "pred-badge "+(direction==="UP"?"up":"down");
+      explainEl.textContent = explain;
+    }
+
+    document.getElementById('fetchData').addEventListener('click', ()=>{
+      const symbol = document.getElementById('symbol').value;
+      predict(symbol);
+    });
+
+    initChart();
+
+    /* ==== Screenshot Analyzer ==== */
+    const screenshotInput = document.getElementById('screenshotInput');
+    const imagePreview = document.getElementById('imagePreview');
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    const imgPrediction = document.getElementById('imgPrediction');
+    const imgExplain = document.getElementById('imgExplain');
+    let lastUploadedImage = null;
+
+    screenshotInput.addEventListener('change', (event)=>{
+      const file = event.target.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = e=>{
+        const img = new Image();
+        img.onload = ()=>{
+          const ctx = imagePreview.getContext('2d');
+          ctx.clearRect(0,0,imagePreview.width,imagePreview.height);
+          imagePreview.width = 300;
+          imagePreview.height = 150;
+          ctx.drawImage(img,0,0,imagePreview.width,imagePreview.height);
+          lastUploadedImage = img;
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    analyzeBtn.addEventListener('click', async ()=>{
+      if(!lastUploadedImage){ alert("Please upload a screenshot first."); return; }
+      imgPrediction.textContent = "Analyzing...";
+      try{
+        const tensor = tf.browser.fromPixels(lastUploadedImage)
+          .resizeBilinear([64,64])
+          .mean(2)
+          .expandDims(0)
+          .expandDims(-1)
+          .div(255);
+
+        const mean = (await tensor.mean().array());
+        const dir = mean>0.5 ? "DOWN" : "UP";
+        const confidence = Math.round(Math.abs(0.5-mean)*200);
+        const explain = `Brightness: ${mean.toFixed(2)} — likely ${dir}`;
+        imgPrediction.textContent = dir+" ("+confidence+"%)";
+        imgPrediction.className = "pred-badge "+(dir==="UP"?"up":"down");
+        imgExplain.textContent = explain;
+      }catch(err){
+        console.error(err);
+        imgPrediction.textContent = "Error analyzing image.";
+        imgExplain.textContent = err.message;
+      }
+    });
+  </script>
 </body>
 </html>

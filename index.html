@@ -9,7 +9,8 @@
     h1 { color: #007a6a; text-align: center; }
     .section { background: #fff; padding: 20px; margin: 15px auto; border-radius: 10px; max-width: 800px; box-shadow: 0 0 8px rgba(0,0,0,0.1); }
     select, button { padding: 8px 12px; border-radius: 6px; border: 1px solid #ccc; margin: 6px 0; }
-    button { background: #007a6a; color: #fff; border: none; cursor: pointer; }
+    button { background: #007a6a; color: #fff; border: none; cursor: pointer; transition: background 0.2s; }
+    button:hover { background: #009f8a; }
     canvas { display: block; margin: 10px auto; background: #000; border-radius: 10px; }
     #prediction { font-size: 18px; font-weight: bold; margin-top: 10px; }
     #imagePreview { width: 300px; height: 150px; border: 2px dashed #aaa; display: block; margin: 10px auto; object-fit: contain; }
@@ -17,6 +18,8 @@
     .pred-badge { display: inline-block; padding: 6px 12px; border-radius: 6px; }
     .up { background: #2ecc71; color: #fff; }
     .down { background: #e74c3c; color: #fff; }
+    .loading { text-align: center; color: #007a6a; font-weight: bold; animation: blink 1.5s infinite; }
+    @keyframes blink { 50% { opacity: 0.4; } }
   </style>
 
   <!-- Load TensorFlow.js + Lightweight Charts -->
@@ -58,174 +61,164 @@
     </div>
   </div>
 
-<script>
-const API_KEY = "EE28K6YNF9TZFDKA";
-const CACHE_TTL = 60 * 1000; // 1 min cache
-const chartDiv = document.getElementById('chart');
-const predictionEl = document.getElementById('prediction');
-const explainEl = document.getElementById('explain');
-let chart, candleSeries;
-const cache = {};
+  <script>
+    const API_KEY = "EE28K6YNF9TZFDKA";
+    const CACHE_TTL = 60 * 1000; // 1 min cache
+    const chartDiv = document.getElementById('chart');
+    const predictionEl = document.getElementById('prediction');
+    const explainEl = document.getElementById('explain');
+    let chart, candleSeries;
+    const cache = {};
 
-function initChart() {
-  chart = LightweightCharts.createChart(chartDiv, { width: chartDiv.clientWidth, height: 300 });
-  candleSeries = chart.addCandlestickSeries();
-}
-
-async function getData(symbol) {
-  const now = Date.now();
-  if (cache[symbol] && now - cache[symbol].time < CACHE_TTL) return cache[symbol].data;
-
-  const from = symbol.slice(0, 3);
-  const to = symbol.slice(3);
-  const url = `https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=${from}&to_symbol=${to}&interval=1min&apikey=${API_KEY}`;
-
-  try {
-    const res = await fetch(url);
-    const json = await res.json();
-
-    // Handle AlphaVantage errors
-    if (json["Error Message"] || json["Note"]) {
-      throw new Error("API limit reached or invalid symbol. Try again in 1 min.");
+    function initChart() {
+      chart = LightweightCharts.createChart(chartDiv, { width: chartDiv.clientWidth, height: 300 });
+      candleSeries = chart.addCandlestickSeries();
     }
 
-    const key = Object.keys(json).find(k => k.includes("Time Series"));
-    if (!key || !json[key]) throw new Error("No market data returned.");
+    async function getData(symbol) {
+      const now = Date.now();
+      if (cache[symbol] && now - cache[symbol].time < CACHE_TTL) {
+        return cache[symbol].data;
+      }
 
-    const data = Object.entries(json[key]).map(([time, ohlc]) => ({
-      time: new Date(time).getTime() / 1000,
-      open: parseFloat(ohlc["1. open"]),
-      high: parseFloat(ohlc["2. high"]),
-      low: parseFloat(ohlc["3. low"]),
-      close: parseFloat(ohlc["4. close"])
-    })).reverse();
+      let functionType = "FX_INTRADAY";
+      if (symbol === "BTCUSD" || symbol === "USOIL" || symbol === "XAUUSD") functionType = "CURRENCY_EXCHANGE_RATE";
 
-    cache[symbol] = { data, time: now };
-    return data;
-  } catch (err) {
-    console.error("Data fetch error:", err);
-    predictionEl.textContent = "⚠️ " + err.message;
-    predictionEl.className = "";
-    return null;
-  }
-}
+      const url = `https://www.alphavantage.co/query?function=${functionType}&from_symbol=${symbol.slice(0,3)}&to_symbol=${symbol.slice(3)}&interval=1min&apikey=${API_KEY}`;
+      const res = await fetch(url);
+      const json = await res.json();
 
-function calcRSI(data, period = 14) {
-  if (data.length < period + 1) return 50;
-  let gains = 0, losses = 0;
-  for (let i = 1; i <= period; i++) {
-    const diff = data[i].close - data[i - 1].close;
-    if (diff >= 0) gains += diff; else losses += Math.abs(diff);
-  }
-  const avgGain = gains / period;
-  const avgLoss = losses / period;
-  const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-  return 100 - (100 / (1 + rs));
-}
+      if (json.Note) throw new Error("Rate limit reached. Please wait a minute.");
+      const key = Object.keys(json).find(k => k.includes('Time Series'));
+      if (!key) throw new Error("No valid data received from API.");
 
-function calcMACD(data, short = 12, long = 26, signal = 9) {
-  if (data.length < long + signal) return 0;
-  function EMA(data, period) {
-    const k = 2 / (period + 1);
-    let ema = data[0].close;
-    return data.map(v => {
-      ema = v.close * k + ema * (1 - k);
-      return { time: v.time, value: ema };
+      const data = Object.entries(json[key]).map(([time, ohlc]) => ({
+        time: new Date(time).getTime() / 1000,
+        open: parseFloat(ohlc["1. open"]),
+        high: parseFloat(ohlc["2. high"]),
+        low: parseFloat(ohlc["3. low"]),
+        close: parseFloat(ohlc["4. close"])
+      })).reverse();
+
+      cache[symbol] = { data, time: now };
+      return data;
+    }
+
+    function calcRSI(data, period=14) {
+      let gains = 0, losses = 0;
+      for (let i=1;i<=period;i++){
+        const diff = data[i].close - data[i-1].close;
+        if (diff>=0) gains+=diff; else losses+=Math.abs(diff);
+      }
+      const avgGain = gains/period;
+      const avgLoss = losses/period || 0.0001;
+      const rs = avgGain/avgLoss;
+      return 100 - (100/(1+rs));
+    }
+
+    function calcMACD(data, short=12, long=26, signal=9) {
+      function EMA(data, period) {
+        const k = 2/(period+1);
+        let ema = data[0].close;
+        return data.map((v)=>{
+          ema = v.close*k + ema*(1-k);
+          return {time:v.time, value:ema};
+        });
+      }
+      const ema12 = EMA(data.slice(-long), short);
+      const ema26 = EMA(data.slice(-long), long);
+      const macdLine = ema12.map((v,i)=>({time:v.time, value:v.value - ema26[i].value}));
+      const signalLine = EMA(macdLine, signal);
+      return macdLine[macdLine.length-1].value - signalLine[signalLine.length-1].value;
+    }
+
+    async function predict(symbol) {
+      predictionEl.textContent = "Fetching data...";
+      predictionEl.className = "loading";
+      explainEl.textContent = "";
+
+      try {
+        const data = await getData(symbol);
+        candleSeries.setData(data);
+
+        const rsi = calcRSI(data);
+        const macd = calcMACD(data);
+        const last = data[data.length-1];
+        const prev = data[data.length-2];
+        const trend = last.close > prev.close ? 1 : -1;
+
+        let score = (trend*0.4) + ((macd>0?1:-1)*0.3) + ((rsi>50?1:-1)*0.3);
+        const direction = score>0 ? "UP" : "DOWN";
+        const confidence = Math.round(Math.abs(score)*100);
+        const explain = `RSI ${rsi.toFixed(1)}, MACD ${macd.toFixed(3)} — Predicting ${direction}`;
+
+        predictionEl.textContent = direction + " ("+confidence+"%)";
+        predictionEl.className = "pred-badge "+(direction==="UP"?"up":"down");
+        explainEl.textContent = explain;
+      } catch (err) {
+        predictionEl.textContent = "⚠️ " + err.message;
+        predictionEl.className = "pred-badge down";
+      }
+    }
+
+    document.getElementById('fetchData').addEventListener('click', ()=>{
+      const symbol = document.getElementById('symbol').value;
+      predict(symbol);
     });
-  }
-  const ema12 = EMA(data.slice(-long), short);
-  const ema26 = EMA(data.slice(-long), long);
-  const macdLine = ema12.map((v, i) => ({ time: v.time, value: v.value - ema26[i].value }));
-  const signalLine = EMA(macdLine, signal);
-  return macdLine.at(-1).value - signalLine.at(-1).value;
-}
 
-async function predict(symbol) {
-  predictionEl.textContent = "Fetching data...";
-  const data = await getData(symbol);
-  if (!data || data.length < 30) {
-    explainEl.textContent = "Not enough data to analyze. Try again later.";
-    return;
-  }
+    initChart();
 
-  candleSeries.setData(data);
-  const rsi = calcRSI(data);
-  const macd = calcMACD(data);
-  const last = data.at(-1);
-  const prev = data.at(-2);
-  const trend = last.close > prev.close ? 1 : -1;
+    /* ==== Screenshot Analyzer ==== */
+    const screenshotInput = document.getElementById('screenshotInput');
+    const imagePreview = document.getElementById('imagePreview');
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    const imgPrediction = document.getElementById('imgPrediction');
+    const imgExplain = document.getElementById('imgExplain');
+    let lastUploadedImage = null;
 
-  let score = (trend * 0.4) + ((macd > 0 ? 1 : -1) * 0.3) + ((rsi > 50 ? 1 : -1) * 0.3);
-  const direction = score > 0 ? "UP" : "DOWN";
-  const confidence = Math.round(Math.min(100, Math.abs(score) * 100));
-  const explain = `RSI ${rsi.toFixed(1)}, MACD ${macd.toFixed(3)} — Predicting ${direction} candle next`;
+    screenshotInput.addEventListener('change', (event)=>{
+      const file = event.target.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = e=>{
+        const img = new Image();
+        img.onload = ()=>{
+          const ctx = imagePreview.getContext('2d');
+          ctx.clearRect(0,0,imagePreview.width,imagePreview.height);
+          imagePreview.width = 300;
+          imagePreview.height = 150;
+          ctx.drawImage(img,0,0,imagePreview.width,imagePreview.height);
+          lastUploadedImage = img;
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
 
-  predictionEl.textContent = direction + " (" + confidence + "%)";
-  predictionEl.className = "pred-badge " + (direction === "UP" ? "up" : "down");
-  explainEl.textContent = explain;
-}
+    analyzeBtn.addEventListener('click', async ()=>{
+      if(!lastUploadedImage){ alert("Please upload a screenshot first."); return; }
+      imgPrediction.textContent = "Analyzing...";
+      try{
+        const tensor = tf.browser.fromPixels(lastUploadedImage)
+          .resizeBilinear([64,64])
+          .mean(2)
+          .expandDims(0)
+          .expandDims(-1)
+          .div(255);
 
-document.getElementById("fetchData").addEventListener("click", () => {
-  const symbol = document.getElementById("symbol").value;
-  predict(symbol);
-});
-
-initChart();
-
-/* ==== Screenshot Analyzer ==== */
-const screenshotInput = document.getElementById("screenshotInput");
-const imagePreview = document.getElementById("imagePreview");
-const analyzeBtn = document.getElementById("analyzeBtn");
-const imgPrediction = document.getElementById("imgPrediction");
-const imgExplain = document.getElementById("imgExplain");
-let lastUploadedImage = null;
-
-screenshotInput.addEventListener("change", (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const img = new Image();
-    img.onload = () => {
-      const ctx = imagePreview.getContext("2d");
-      imagePreview.width = 300;
-      imagePreview.height = 150;
-      ctx.clearRect(0, 0, imagePreview.width, imagePreview.height);
-      ctx.drawImage(img, 0, 0, imagePreview.width, imagePreview.height);
-      lastUploadedImage = img;
-    };
-    img.src = e.target.result;
-  };
-  reader.readAsDataURL(file);
-});
-
-analyzeBtn.addEventListener("click", async () => {
-  if (!lastUploadedImage) {
-    alert("Please upload a screenshot first.");
-    return;
-  }
-  imgPrediction.textContent = "Analyzing...";
-  try {
-    const tensor = tf.browser.fromPixels(lastUploadedImage)
-      .resizeBilinear([64, 64])
-      .mean(2)
-      .expandDims(0)
-      .expandDims(-1)
-      .div(255);
-
-    const mean = (await tensor.mean().array());
-    const dir = mean > 0.5 ? "DOWN" : "UP";
-    const confidence = Math.round(Math.abs(0.5 - mean) * 200);
-    const explain = `Brightness: ${mean.toFixed(2)} — likely ${dir}`;
-    imgPrediction.textContent = dir + " (" + confidence + "%)";
-    imgPrediction.className = "pred-badge " + (dir === "UP" ? "up" : "down");
-    imgExplain.textContent = explain;
-  } catch (err) {
-    console.error(err);
-    imgPrediction.textContent = "Error analyzing image.";
-    imgExplain.textContent = err.message;
-  }
-});
+        const mean = (await tensor.mean().array());
+        const dir = mean>0.5 ? "DOWN" : "UP";
+        const confidence = Math.round(Math.abs(0.5-mean)*200);
+        const explain = `Brightness: ${mean.toFixed(2)} — likely ${dir}`;
+        imgPrediction.textContent = dir+" ("+confidence+"%)";
+        imgPrediction.className = "pred-badge "+(dir==="UP"?"up":"down");
+        imgExplain.textContent = explain;
+      }catch(err){
+        console.error(err);
+        imgPrediction.textContent = "Error analyzing image.";
+        imgExplain.textContent = err.message;
+      }
+    });
   </script>
 </body>
 </html>
